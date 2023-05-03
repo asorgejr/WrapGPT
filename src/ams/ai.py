@@ -133,11 +133,13 @@ class Message:
     if len(choices) == 0: return None
     choice: dict = choices[0]
     if not isinstance(choice, dict): return None
-    if "message" not in choice: return None
-    message = choice["message"]
+    if "message" not in choice and "delta" not in choice: return None
+    isDelta = "delta" in choice
+    message = choice["message"] if not isDelta else choice["delta"]  # TODO: hacky
     if not isinstance(message, dict): return None
-    if "role" not in message or "content" not in message: return None
-    role = message["role"]
+    if "content" not in message: return None
+    if not isDelta and "role" not in message: return None
+    role = message["role"] if not isDelta else "assistant"
     content = message["content"]
     return Message(role=role, content=content, id=id, created=created)
 
@@ -170,6 +172,8 @@ class PartialMessage(Message):
 
   def __init__(self, role: str, content: str, id: str = DEFAULT_ID, created: int = DEFAULT_TIME, prev: Optional['PartialMessage'] = None):
     super().__init__(role=role, content=content, id=id, created=created)
+    self._prev = None
+    self._next = None
     self._first = self
     self._idx = 0
     if prev is not None:
@@ -212,8 +216,8 @@ class PartialMessage(Message):
     if "delta" not in choice: return None
     message: dict = choice["delta"]
     if not isinstance(message, dict): return None
-    if "role" not in message or "content" not in message: return None
-    role = message["role"]
+    if "content" not in message: return None
+    role = "assistant"
     content = message["content"]
     return PartialMessage(role=role, content=content, id=id, created=created, prev=previous)
 
@@ -233,6 +237,7 @@ class PartialMessage(Message):
       if first is None: first = message
       if prev is not None: prev._next = message
       prev = message
+    return first
 
 
 def messageFromApiResponse(apiResponseOrResponses: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Optional[Union[Message, PartialMessage]]:
@@ -260,10 +265,10 @@ class Usage:
     if not isinstance(self.prompt_tokens, int): raise TypeError("prompt_tokens must be an integer")
     if not isinstance(self.completion_tokens, int): raise TypeError("completion_tokens must be an integer")
     if not isinstance(self.total_tokens, int): raise TypeError("total_tokens must be an integer")
-  
+
   def isDefault(self) -> bool:
     return self.prompt_tokens == 0 and self.completion_tokens == 0 and self.total_tokens == 0
-  
+
   def toApiUsage(self) -> Dict[str, Any]:
     return {
       "prompt_tokens": self.prompt_tokens,
@@ -309,7 +314,7 @@ class Response:
     self.model = model
     self.object_ = object_
     self.usage = usage
-  
+
   def toApiResponse(self) -> Dict[str, Any]:
     ret = {
       "choices": [msg.toApiMessage() for msg in self.choices],
@@ -330,35 +335,55 @@ class Response:
     return Response(choices=[], created=0, id="", model="", object_="", usage=Usage())
 
   @staticmethod
-  def FromApiResponse(apiResponse: Dict[str, Any]) -> Optional['Response']:
+  def FromApiResponse(apiResponse: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Optional['Response']:
     """Creates a Response from a response dict, or returns None if the response is invalid.
 
     Args:
       apiResponse: The response dict to create a Response from.
     """
-    if "choices" not in apiResponse or "id" not in apiResponse or "created" not in apiResponse or "model" not in apiResponse or "object" not in apiResponse:
-      return None
-    choicesApi: List[Dict[str, Any]] = apiResponse["choices"]
-    idApi: str = apiResponse["id"]
-    createdApi: int = apiResponse["created"]
-    modelApi: str = apiResponse["model"]
-    objectApi: str = apiResponse["object"]
-    usageApi: Optional[Dict[str, Any]] = apiResponse.get("usage", None)
-    if not isinstance(choicesApi, list) or not isinstance(idApi, str) or not isinstance(createdApi, int) or not isinstance(modelApi, str) or not isinstance(objectApi, str):
-      return None
-    if usageApi and not isinstance(usageApi, dict):
-      return None
-    choices = []
-    for choice in choicesApi:
-      message = messageFromApiResponse(apiResponse)
-      if message is None: return None
-      choices.append(message)
-    usage: Usage = Usage()
-    if usageApi:
-      usage = Usage.FromApiResponse(usageApi) or Usage()
-    return Response(choices=choices, created=createdApi, id=idApi, model=modelApi, object_=objectApi, usage=usage)
+    def parseResponse(resp):
+      if "choices" not in apiResponse or "id" not in apiResponse or "created" not in apiResponse or "model" not in apiResponse or "object" not in apiResponse:
+        return None
+      choicesApi: List[Dict[str, Any]] = apiResponse["choices"]
+      idApi: str = apiResponse["id"]
+      createdApi: int = apiResponse["created"]
+      modelApi: str = apiResponse["model"]
+      objectApi: str = apiResponse["object"]
+      usageApi: Optional[Dict[str, Any]] = apiResponse.get("usage", None)
+      if not isinstance(choicesApi, list) or not isinstance(idApi, str) or not isinstance(createdApi, int) or not isinstance(modelApi, str) or not isinstance(objectApi, str):
+        return None
+      if usageApi and not isinstance(usageApi, dict):
+        return None
+      choices = []
+      for choice in choicesApi:
+        message = messageFromApiResponse(apiResponse)
+        if message is None: return None
+        choices.append(message)
+      usage: Usage = Usage()
+      if usageApi:
+        usage = Usage.FromApiResponse(usageApi) or Usage()
+      return Response(choices=choices, created=createdApi, id=idApi, model=modelApi, object_=objectApi, usage=usage)
+    if isinstance(apiResponse, dict):
+      return parseResponse(apiResponse)
+    elif isinstance(apiResponse, list):
+      if len(apiResponse) == 0: return None
+      return parseResponse(apiResponse[0])
 
+  @staticmethod
+  def FromApiResponses(apiResponses: List[Dict[str, Any]]) -> Optional['Response']:
+    """Creates a singular Response from a list of streamed responses, or returns None if the responses are invalid.
 
+    Args:
+      apiResponses: The list of response dicts to create Responses from.
+    """
+    if len(apiResponses) == 0: return None
+    if len(apiResponses) == 1: return Response.FromApiResponse(apiResponses[0])
+    resp = Response.FromApiResponse(apiResponses[0])
+    if resp is None: return None
+    message = messageFromApiResponse(apiResponses)
+    if message is None: return None
+    resp.choices = [message.toMessage()]
+    return resp
 
 class ChatEntry:
   """An entry in the chat history. A new entry is created each time the user creates or edits a prompt.
@@ -738,7 +763,7 @@ class ChatCompletionParams:
     if value and not all(isinstance(x, str) for x in value): raise TypeError("stop must be a list of strings")
     self._stop = value
 
-  _stream: bool = False
+  _stream: bool = True
   @property
   def stream(self) -> bool:
     """If set, partial message deltas will be sent, like in ChatGPT. Tokens will be sent as data-only server-sent events as they become available, with the stream terminated by a data: [DONE] message. See the OpenAI Cookbook for example code."""
@@ -769,7 +794,7 @@ class ChatCompletionParams:
   def __init__(self, model: str, messages: Optional[List[Message]] = None,
                temperature: Optional[float] = None, max_tokens: Optional[int] = None, top_p: Optional[float] = None,
                n: Optional[int] = None, frequency_penalty: Optional[float] = None,
-               presence_penalty: Optional[float] = None, stop: Optional[List[str]] = None, stream: bool = False,
+               presence_penalty: Optional[float] = None, stop: Optional[List[str]] = None, stream: bool = True,
                logit_bias: Optional[List[TokenSet]] = None, user: Optional[str] = None, apiKey: str = ""):
     """Sets the stop sequence."""
     if messages is None: messages = []
@@ -898,7 +923,10 @@ def getModels(filterPrefixes: Optional[List[str]] = None) -> List[str]:
   Args:
     filterPrefixes ([str] = ['gpt']): Only return models that start with these prefixes. Set to [] to return all models."""
   if filterPrefixes is None: filterPrefixes = ['gpt']
-  engineList: dict = openai.Engine.list()
+  try:
+    engineList: dict = openai.Engine.list()
+  except Exception as e:
+    return []
   models = engineList['data']
   models = [m['id'] for m in models]
   if len(filterPrefixes) > 0:

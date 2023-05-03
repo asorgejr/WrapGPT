@@ -8,6 +8,7 @@ from ams.ui.fields import TextFieldStyle
 from . import ai
 from . import gpt_window
 from .settings import Settings
+from .ui.controls import CheckBox
 
 
 def TFTHEME():
@@ -34,8 +35,11 @@ class GPTPrefsWindow(QtWidgets.QDialog):
     self._gptWindow = gptWindow
     self._completionParams = gptWindow.state.completionParams.copy()
     self.setWindowTitle('GPT Preferences')
-    self.setMinimumSize(800, 1280)
-    self.setMaximumSize(800, 1280)
+    dw = QtWidgets.QDesktopWidget().availableGeometry().width() - 100
+    dh = QtWidgets.QDesktopWidget().availableGeometry().height() - 100
+    w, h = min(800, dw), min(1280, dh)
+    self.setMinimumSize(w, h)
+    self.setMaximumSize(w, h)
     # layout items should be 'spaced between' and not 'stretched'
     self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.MinimumExpanding)
     self._initUI()
@@ -122,16 +126,23 @@ to talk about new topics. Negative values encourage the model to repeat itself. 
     def onPresencePenaltyEnabledChanged(evt: ValueChangedEvent[bool]): self._completionParams._presence_penalty = self._presencePenaltyField.value() if evt.newValue else None
     self._presencePenaltyField.eEnabledChanged.connect(onPresencePenaltyEnabledChanged)
 
+    self._streamMode = LabelControl("Stream Completions", CheckBox(value=self._completionParams.stream))
+    self._layout.addWidget(self._streamMode)
+    def onStreamModeChanged(evt: ValueChangedEvent[bool]): self._completionParams.stream = evt.newValue
+    self._streamMode.eValueChanged.connect(onStreamModeChanged)
+    self._streamMode.setToolTip("""If enabled, the model will stream back partial results as they become available, incrementally.""")
+
     self._initLogitBiasTable()
 
     # app name and version and copyright
     self._layout.addSpacing(5)
     app = QtWidgets.QApplication.instance()
-    self._appInfoLabel = QLabel(f'<a href="https://github.com/asorgejr/GPFree">{app.applicationName()} v{app.applicationVersion()}</a> © Anthony Sorge 2023')
+    self._appInfoLabel = QLabel(f'<a href="https://github.com/asorgejr/WrapGPT">{app.applicationName()} v{app.applicationVersion()}</a> © Anthony Sorge 2023')
     self._appInfoLabel.setTextFormat(Qt.RichText)
     self._appInfoLabel.setOpenExternalLinks(True)
     self._appInfoLabel.setAlignment(Qt.AlignCenter)
     self._layout.addWidget(self._appInfoLabel)
+
 
   def _initButtons(self):
     """Initialize the buttons."""
@@ -190,5 +201,7 @@ word 'racecar' or not. See https://platform.openai.com/tokenizer to see how a wo
       self._completionParams.setLogitBiasStrDict(d)
     self._logitBiasList.eListChanged.connect(onListChange)
     self._logitBiasList.setToolTip("Add a word to the left column and a number value to the right column. Double click to edit")
+    self._logitBiasList.addButton.setToolTip("Add a word to the left column and a number value to the right column. Double click to edit")
+    self._logitBiasList.removeButton.setToolTip("Remove the last item in the list")
     self._layout.addWidget(self._logitBiasList)
 

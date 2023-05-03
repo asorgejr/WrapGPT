@@ -1,9 +1,10 @@
 import ams.ui.window as window
 import ams.ui.fields as fields
-import src.ams.ui.themes as themes
 import ams.ui.controls as controls
+import ams.ui.themes as themes
 from .ai import Chat, Message, PartialMessage, ChatCompletionParams, Response, ChatEntry, getModels
 from . import gpt_prefs
+from . import settings
 from .settings import Settings
 
 import copy
@@ -244,7 +245,7 @@ class GPTWindow(window.Window[QVBoxLayout]):
 
 
   def __init__(self, parent=None, models: Optional[List[str]] = None, state: Optional[GPTState] = None,
-               title: str = 'GPT', size: Tuple[int, int] = (800, 600)):
+               title: str = 'GPT', size: Tuple[int, int] = (1024, 900)):
     """Create a new GPTWindow instance.
 
     Args:
@@ -266,7 +267,8 @@ class GPTWindow(window.Window[QVBoxLayout]):
 
     # initialize super
     app = QtWidgets.QApplication.instance()
-    super().__init__(parent, layout=QVBoxLayout(), title=app.applicationName(), size=(1280, 1280))
+    w, h = min(size[0], app.desktop().screenGeometry().width()), min(size[1], app.desktop().screenGeometry().height())
+    super().__init__(parent, layout=QVBoxLayout(), title=app.applicationName(), size=(w, h))
 
     # initialize self
     self._settings = Settings.instance()
@@ -391,6 +393,11 @@ class GPTWindow(window.Window[QVBoxLayout]):
     self._clearBtn.clicked.connect(self._onClearButton)
     self._clearBtn.setToolTip('Clear all prompts and responses from the chat history.')
 
+    self._stopBtn = QPushButton('Stop')
+    self._buttonBox.addWidget(self._stopBtn, stretch=0, alignment=Qt.AlignRight)
+    self._stopBtn.clicked.connect(self._onStopButton)
+    self._stopBtn.setToolTip('Stop GPT from responding or cancel the submission.')
+
     self._submitBtn = QPushButton('Submit')
     self._buttonBox.addWidget(self._submitBtn, stretch=0, alignment=Qt.AlignRight)
     self._submitBtn.clicked.connect(self._onSubmitButton)
@@ -418,8 +425,12 @@ class GPTWindow(window.Window[QVBoxLayout]):
   def _onDisplayRespChk(self, checked: bool):
     self._responseField.setHidden(not checked)
 
-  def _onResponseCompleted(self, apiResponse: dict, setResponseField: bool = True):
-    response: Response = Response.FromApiResponse(apiResponse)
+  def _onResponseCompleted(self, apiResponse: Union[dict, list], setResponseField: bool = True):
+    response: Response
+    if isinstance(apiResponse, dict):
+      response = Response.FromApiResponse(apiResponse)
+    else:
+      response = Response.FromApiResponses(apiResponse)
     # message = apiResponse['choices'][0]['message']
     respMessage: Message = response.choices[0].toMessage()
     self.state.chat.current.response = response
@@ -465,18 +476,13 @@ class GPTWindow(window.Window[QVBoxLayout]):
       return response
 
     def afterTask(response):
-      # params = ChatCompletionParams(
-      #   model=model,
-      #   messages=messages,
-      #   temperature=0.5,
-      # )
       self._onResponseCompleted(response)
       self._showLoadingIndicator(False)
       self._timer.stop()
     # task() will run with a 15 second timeout
     self._timer = QTimer()
     self._timer.setSingleShot(True)
-    self._thread = ResultThread(target=task)
+    self._thread = ResultThread(target=streamTask if self.state.completionParams.stream else task)
     def onTimeout():
       self._thread.terminate()
       self._showLoadingIndicator(False)
@@ -493,6 +499,13 @@ class GPTWindow(window.Window[QVBoxLayout]):
   def _onSubmitButton(self):
     """Submit the prompt to the selected model."""
     # get the selected model
+    hasConnection = Settings.hasInternetConnection()
+    if not hasConnection:
+      settings.showNoInternetConnectionWarning()
+      return
+    if not self._settings.validApiKey:
+      settings.showNoApiKeyWarning()
+      return
     model = self.modelMenu.currentText()
     role = self.roleMenu.currentText()
     # get the prompt
@@ -529,6 +542,15 @@ class GPTWindow(window.Window[QVBoxLayout]):
   def clearHistory(self):
     """Clear the chat history."""
     self._onClearButton()
+
+  def _onStopButton(self):
+    """Stop the current request."""
+    try:
+      self._timer.stop()
+      self._thread.terminate()
+      self._showLoadingIndicator(False)
+    except AttributeError:
+      pass
 
   def close(self):
     """Close the dialog."""

@@ -1,3 +1,4 @@
+import requests
 import typing as t
 import openai
 from PySide2 import QtCore, QtWidgets
@@ -27,6 +28,14 @@ class Settings(QtCore.QSettings):
     self._onValueChanged(key, value)
 
   @staticmethod
+  def hasInternetConnection():
+    try:
+      requests.get('https://www.google.com/', timeout=15)
+      return True
+    except requests.ConnectionError:
+      return False
+
+  @staticmethod
   def KEY_OPENAI_API_KEY() -> str:
     """The settings key for the OpenAI API key"""
     return 'openai/api_key'
@@ -51,12 +60,10 @@ class Settings(QtCore.QSettings):
   def tryValidateApiKey(key: str) -> bool:
     oldKey = openai.api_key
     openai.api_key = key
-    try:
-      ai.getModels(['gpt'])
-      return True
-    except openai.error.AuthenticationError as e:
-      openai.api_key = oldKey
+    models = ai.getModels(['gpt'])
+    if len(models) == 0:
       return False
+    return True
 
   @staticmethod
   def instance(application: QtWidgets.QApplication = None) -> 'Settings':
@@ -67,7 +74,7 @@ class Settings(QtCore.QSettings):
 
 # SETTINGS: Settings = None  # type: ignore
 
-def ShowNoApiKeyDialog():
+def showNoApiKeyWarning():
   message = QtWidgets.QDialog()
   message.setModal(True)
   message.setWindowTitle('No API Key')
@@ -88,3 +95,24 @@ def ShowNoApiKeyDialog():
   message.layout().addLayout(buttonLayout)
   okButton.clicked.connect(message.accept)
   message.exec_()
+
+
+def showNoInternetConnectionWarning():
+  message = QtWidgets.QDialog()
+  message.setModal(True)
+  message.setWindowTitle('No Internet Connection')
+  layout = QtWidgets.QVBoxLayout()
+  message.setLayout(layout)
+  label = QtWidgets.QLabel('<p>There is no internet connection. You will not be able to send prompts to openai without an internet connection.</p>'
+                           '<p>Please check your internet connection and try again.</p>')
+  layout.addWidget(label)
+  okButton = QtWidgets.QPushButton('OK')
+  okButton.setFixedWidth(100)
+  buttonLayout = QtWidgets.QHBoxLayout()
+  buttonLayout.addStretch()
+  buttonLayout.addWidget(okButton)
+  message.layout().addLayout(buttonLayout)
+  okButton.clicked.connect(message.accept)
+  message.exec_()
+
+

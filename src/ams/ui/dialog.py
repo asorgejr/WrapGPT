@@ -1,5 +1,4 @@
 # import os
-import importlib as il
 from typing import Callable, List, Optional, Tuple, Union
 
 from PySide2.QtCore import Qt, QObject
@@ -8,8 +7,6 @@ from PySide2.QtWidgets import (
   QSizePolicy, QSpacerItem)
 
 from . import window
-
-il.reload(window) # TODO: remove this
 
 Window = window.Window
 TPosition = window.TPosition

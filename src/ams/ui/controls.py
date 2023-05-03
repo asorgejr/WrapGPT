@@ -23,7 +23,6 @@ class AbstractControl:
   eValueChanged: QtCore.Signal
   """An event that is emitted when the value of the control changes. The callable should take a ValueChangedEvent as its only parameter"""
 
-
   def value(self) -> Any:
     """Returns the current value of the control"""
     pass
@@ -393,6 +392,22 @@ class Slider(AbstractControl, QtWidgets.QWidget):
     """Scales the slider's value to the actual range.
     value / Slider._RATIO"""
     return value / self._RATIO
+
+
+
+class CheckBox(AbstractControl, QtWidgets.QCheckBox):
+  """A checkbox which implements AbstractControl"""
+  eValueChanged = QtCore.Signal(ValueChangedEvent)
+  def __init__(self, parent: Optional[QtWidgets.QWidget] = None, value: bool = False):
+    super().__init__(parent)
+    self.setChecked(value)
+    self.stateChanged.connect(self._stateChanged)
+
+  def _stateChanged(self, state: int):
+    self.eValueChanged.emit(ValueChangedEvent(not self.isChecked(), self.isChecked()))
+
+  def setDefault(self):
+    self.setChecked(False)
 
 
 
